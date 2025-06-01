@@ -2,9 +2,7 @@ import asyncio
 import re
 import telnetlib3
 
-olt_ip = "192.168.160.2"
-olt_username = "ahmed.h"
-olt_password = "ahmed1234"
+
 
 async def send_command(writer, command, reader, expect=None, wait=1):
     writer.write(command + "\n")
