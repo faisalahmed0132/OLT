@@ -1,0 +1,90 @@
+import asyncio
+import re
+import telnetlib3
+
+olt_ip = "192.168.160.2"
+olt_username = "ahmed.h"
+olt_password = "ahmed1234"
+
+async def send_command(writer, command, reader, expect=None, wait=1):
+    writer.write(command + "\n")
+    await writer.drain()
+    await asyncio.sleep(wait)
+
+    output = ''
+    while True:
+        try:
+            line = await asyncio.wait_for(reader.read(1024), timeout=1)
+            if not line:
+                break
+            output += line
+            if expect and expect in output:
+                break
+            # Break if prompt appears (adjust based on your device prompt)
+            if output.strip().endswith(('#', '>')):
+                break
+        except asyncio.TimeoutError:
+            break
+
+    if expect and expect not in output:
+        print(f"[!] Warning: Expected '{expect}' NOT found after command: {command}")
+    else:
+        print(f"[✓] Command executed successfully: {command}")
+
+    return output
+
+async def run_olt_commands():
+    reader, writer = await telnetlib3.open_connection(olt_ip, 23)
+
+    # Login process
+    await asyncio.sleep(1)
+    writer.write(olt_username + "\n")
+    await writer.drain()
+    await asyncio.sleep(1)
+
+    writer.write(olt_password + "\n")
+    await writer.drain()
+    await asyncio.sleep(2)
+
+    # Enter enable mode (adjust if needed)
+    await send_command(writer, "enable", reader, expect="#")
+
+    # Enter config mode
+    await send_command(writer, "config", reader, expect="config")
+
+    # Enter interface gpon 0/1
+    await send_command(writer, "interface gpon 0/1", reader, expect="gpon")
+
+    # Loop GPON and ONT IDs
+    for gpon_id in range(7, 8):
+        for ont_id in range(1, 10):
+            cmd = f"display ont optical-info {gpon_id} {ont_id}"
+            output = await send_command(writer, cmd, reader, wait=2)
+
+            # Handle '---- More' pagination (by sending space)
+            for _ in range(5):
+                if '---- More' in output:
+                    writer.write(' ')
+                    await writer.drain()
+                    await asyncio.sleep(1)
+                    more_output = await reader.read(65535)
+                    output += more_output
+                else:
+                    break
+
+            rx_match = re.search(r"Rx optical power\(dBm\)\s*:\s*(-?\d+\.\d+)", output)
+            tx_match = re.search(r"Tx optical power\(dBm\)\s*:\s*(-?\d+\.\d+)", output)
+
+            rx_power = rx_match.group(1) if rx_match else "Not Found"
+            tx_power = tx_match.group(1) if tx_match else "Not Found"
+
+            print(f"\nCommand: {cmd}")
+            print(f"Rx optical power: {rx_power} dBm")
+            print(f"Tx optical power: {tx_power} dBm")
+
+            await asyncio.sleep(2)
+
+    writer.close()
+    await writer.wait_closed()
+
+asyncio.run(run_olt_commands())
